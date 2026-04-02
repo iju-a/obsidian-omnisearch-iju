@@ -1,5 +1,6 @@
 import { type App, type CachedMetadata, MarkdownView, TFile } from 'obsidian'
 import type { ResultNote } from '../globals'
+import { scrollAndHighlight } from 'src/iju/scrollAndHighlight'
 
 /**
  * Extracts the PDF page number from content based on the offset, looking for page markers in format: `^# Page N^page=N$`
@@ -15,9 +16,7 @@ function getPdfPageFromOffset(content: string, offset: number): number | null {
   const regex = /^# Page ([0-9]+)\^page=\1$/gm
   let lastMatch: RegExpExecArray | null = null
   let match: RegExpExecArray | null
-  while (
-    (match = regex.exec(textBeforeOffset)) !== null
-  ) {
+  while ((match = regex.exec(textBeforeOffset)) !== null) {
     lastMatch = match
   }
 
@@ -98,6 +97,8 @@ export async function openNote(
     from: { line: pos.line - 10, ch: 0 },
     to: { line: pos.line + 10, ch: 0 },
   })
+
+  scrollAndHighlight(view, pos.line)
 }
 
 export async function createNote(
