@@ -1,9 +1,15 @@
 import { MarkdownView } from 'obsidian'
+import type { EditorPosition } from 'obsidian'
 import { settings } from '../settings'
 
 const SOURCE_HIGHLIGHT_DURATION_MS = 3600
-const SOURCE_HIGHLIGHT_LAYER_CLASS = 'omnisearch-source-highlight-layer'
-const SOURCE_HIGHLIGHT_RECT_CLASS = 'omnisearch-source-highlight-rect'
+const SOURCE_HIGHLIGHT_FADE_DURATION_MS = 420
+const SOURCE_HIGHLIGHT_INITIAL_ALPHA = 0.6
+const SOURCE_CUSTOM_HIGHLIGHT_NAME = 'omnisearch-source-match'
+const SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS =
+  'omnisearch-source-selection-highlight-active'
+const SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS =
+  'omnisearch-source-selection-highlight-fading'
 
 function waitForAnimationFrame(): Promise<void> {
   return new Promise(resolve => {
@@ -25,34 +31,184 @@ function ensureHighlightStyles(doc: Document): void {
   const styleEl = doc.createElement('style')
   styleEl.id = 'omnisearch-source-match-highlight-style'
   styleEl.textContent = `
-    .${SOURCE_HIGHLIGHT_LAYER_CLASS} {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      z-index: 5;
+    ::highlight(${SOURCE_CUSTOM_HIGHLIGHT_NAME}) {
+      background-color: rgba(
+        255,
+        208,
+        0,
+        var(--omnisearch-source-highlight-alpha, 0.6)
+      );
+      color: inherit;
     }
 
-    .${SOURCE_HIGHLIGHT_RECT_CLASS} {
-      position: absolute;
-      background-color: rgba(255, 208, 0, 0.6);
+    .cm-editor.${SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS} > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+    .cm-editor.${SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS}.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+      background-color: rgba(
+        255,
+        208,
+        0,
+        var(--omnisearch-source-highlight-alpha, ${SOURCE_HIGHLIGHT_INITIAL_ALPHA})
+      ) !important;
       border-radius: 3px;
       box-shadow: 0 0 0 1px rgba(255, 166, 0, 0.7);
-      animation: omnisearch-source-match-fade ${SOURCE_HIGHLIGHT_DURATION_MS}ms linear forwards;
-      will-change: opacity;
     }
 
-    @keyframes omnisearch-source-match-fade {
-      0% {
-        opacity: 0.96;
-      }
+    .cm-editor.${SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS} {
+      --omnisearch-source-highlight-alpha: ${SOURCE_HIGHLIGHT_INITIAL_ALPHA};
+    }
 
-      100% {
-        opacity: 0;
-      }
+    .cm-editor.${SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS}.${SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS} {
+      --omnisearch-source-highlight-alpha: 0;
     }
   `
 
   doc.head.appendChild(styleEl)
+}
+
+function getCssHighlights(doc: Document):
+  | {
+      delete(name: string): void
+      set(name: string, value: unknown): void
+    }
+  | null {
+  const cssWithHighlights = doc.defaultView?.CSS as
+    | {
+        highlights?: {
+          delete(name: string): void
+          set(name: string, value: unknown): void
+        }
+      }
+    | undefined
+
+  return cssWithHighlights?.highlights ?? null
+}
+
+function clearExistingCustomHighlight(doc: Document): void {
+  getCssHighlights(doc)?.delete(SOURCE_CUSTOM_HIGHLIGHT_NAME)
+}
+
+function clearExistingSelectionHighlight(editorEl: HTMLElement): void {
+  editorEl.removeClass(SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS)
+  editorEl.removeClass(SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS)
+  clearExistingCustomHighlight(editorEl.doc)
+  editorEl.style.removeProperty('--omnisearch-source-highlight-alpha')
+  editorEl.doc.documentElement.style.removeProperty(
+    '--omnisearch-source-highlight-alpha'
+  )
+
+  const previousTimeout = Number(
+    editorEl.dataset.omnisearchSelectionHighlightTimeout ?? 0
+  )
+  if (previousTimeout) {
+    window.clearTimeout(previousTimeout)
+    delete editorEl.dataset.omnisearchSelectionHighlightTimeout
+  }
+
+  const previousFadeTimeout = Number(
+    editorEl.dataset.omnisearchSelectionHighlightFadeTimeout ?? 0
+  )
+  if (previousFadeTimeout) {
+    window.clearTimeout(previousFadeTimeout)
+    delete editorEl.dataset.omnisearchSelectionHighlightFadeTimeout
+  }
+
+  const previousAnimationFrame = Number(
+    editorEl.dataset.omnisearchSelectionHighlightAnimationFrame ?? 0
+  )
+  if (previousAnimationFrame) {
+    cancelAnimationFrame(previousAnimationFrame)
+    delete editorEl.dataset.omnisearchSelectionHighlightAnimationFrame
+  }
+}
+
+function setHighlightAlpha(editorEl: HTMLElement, alpha: number): void {
+  const value = String(Math.max(0, alpha))
+  editorEl.style.setProperty('--omnisearch-source-highlight-alpha', value)
+  editorEl.doc.documentElement.style.setProperty(
+    '--omnisearch-source-highlight-alpha',
+    value
+  )
+}
+
+function startHighlightFade(editorEl: HTMLElement): void {
+  const start = performance.now()
+
+  const tick = (now: number) => {
+    const elapsed = now - start
+    const progress = Math.min(elapsed / SOURCE_HIGHLIGHT_FADE_DURATION_MS, 1)
+    const eased = 1 - (1 - progress) * (1 - progress)
+    const alpha = SOURCE_HIGHLIGHT_INITIAL_ALPHA * (1 - eased)
+    setHighlightAlpha(editorEl, alpha)
+
+    if (progress < 1) {
+      const animationFrame = requestAnimationFrame(tick)
+      editorEl.dataset.omnisearchSelectionHighlightAnimationFrame =
+        String(animationFrame)
+      return
+    }
+
+    delete editorEl.dataset.omnisearchSelectionHighlightAnimationFrame
+  }
+
+  const animationFrame = requestAnimationFrame(tick)
+  editorEl.dataset.omnisearchSelectionHighlightAnimationFrame =
+    String(animationFrame)
+}
+
+function centerEditorRangeInScroller(
+  scrollerEl: HTMLElement,
+  range: Range | null
+): void {
+  if (!range) {
+    return
+  }
+
+  const rangeRect = range.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+
+  if (!rangeRect.height && !rangeRect.width) {
+    return
+  }
+
+  const rangeCenter =
+    rangeRect.top - scrollerRect.top + scrollerEl.scrollTop + rangeRect.height / 2
+  const targetScrollTop = Math.max(
+    0,
+    rangeCenter - scrollerEl.clientHeight / 2
+  )
+
+  scrollerEl.scrollTo({
+    top: targetScrollTop,
+    behavior: 'smooth',
+  })
+}
+
+function centerElementInScroller(
+  scrollerEl: HTMLElement,
+  targetEl: HTMLElement
+): void {
+  const targetRect = targetEl.getBoundingClientRect()
+  const scrollerRect = scrollerEl.getBoundingClientRect()
+
+  if (!targetRect.height && !targetRect.width) {
+    return
+  }
+
+  const targetCenter =
+    targetRect.top -
+    scrollerRect.top +
+    scrollerEl.scrollTop +
+    targetRect.height / 2
+
+  const targetScrollTop = Math.max(
+    0,
+    targetCenter - scrollerEl.clientHeight / 2
+  )
+
+  scrollerEl.scrollTo({
+    top: targetScrollTop,
+    behavior: 'smooth',
+  })
 }
 
 function getSourceEditorElements(view: MarkdownView): {
@@ -210,6 +366,53 @@ function getHighlightRectsFromVisibleMatch(
   return rects
 }
 
+function findVisibleMatchRange(
+  root: HTMLElement,
+  matchText: string
+): Range | null {
+  const doc = root.doc
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const textNodes: Array<{ node: Text; start: number; end: number }> = []
+  let current = walker.nextNode()
+  let visibleText = ''
+
+  while (current) {
+    if (current instanceof Text) {
+      const text = current.textContent ?? ''
+      const start = visibleText.length
+      visibleText += text
+      textNodes.push({
+        node: current,
+        start,
+        end: visibleText.length,
+      })
+    }
+    current = walker.nextNode()
+  }
+
+  const matchIndex = visibleText.indexOf(matchText)
+  if (matchIndex === -1) {
+    return null
+  }
+
+  const startSegment = textNodes.find(
+    segment => matchIndex >= segment.start && matchIndex < segment.end
+  )
+  const endIndex = matchIndex + matchText.length
+  const endSegment = textNodes.find(
+    segment => endIndex > segment.start && endIndex <= segment.end
+  )
+
+  if (!startSegment || !endSegment) {
+    return null
+  }
+
+  const range = doc.createRange()
+  range.setStart(startSegment.node, matchIndex - startSegment.start)
+  range.setEnd(endSegment.node, endIndex - endSegment.start)
+  return range
+}
+
 function pickBestHighlightRects(candidates: DOMRect[][]): DOMRect[] {
   return candidates.reduce<DOMRect[]>((best, current) => {
     if (current.length > best.length) {
@@ -232,168 +435,170 @@ function pickBestHighlightRects(candidates: DOMRect[][]): DOMRect[] {
   }, [])
 }
 
-function clearExistingHighlightLayer(editorEl: HTMLElement): void {
-  const existingLayer = editorEl.querySelector<HTMLElement>(
-    `.${SOURCE_HIGHLIGHT_LAYER_CLASS}`
-  )
-  existingLayer?.remove()
+function applyCssCustomHighlight(doc: Document, range: Range): boolean {
+  const highlightCtor = doc.defaultView?.Highlight as
+    | (new (...ranges: Range[]) => unknown)
+    | undefined
+  const highlights = getCssHighlights(doc)
 
-  const previousTimeout = Number(
-    editorEl.dataset.omnisearchHighlightTimeout ?? 0
-  )
-  if (previousTimeout) {
-    window.clearTimeout(previousTimeout)
-    delete editorEl.dataset.omnisearchHighlightTimeout
-  }
-}
-
-function createHighlightLayer(scrollerEl: HTMLElement): HTMLElement {
-  const layerEl = scrollerEl.doc.createElement('div')
-  layerEl.className = SOURCE_HIGHLIGHT_LAYER_CLASS
-  scrollerEl.appendChild(layerEl)
-  return layerEl
-}
-
-function addHighlightRects(
-  layerEl: HTMLElement,
-  scrollerEl: HTMLElement,
-  rects: DOMRect[]
-): boolean {
-  const visibleRects = rects.filter(rect => rect.width > 0 && rect.height > 0)
-  const scrollerRect = scrollerEl.getBoundingClientRect()
-
-  for (const rect of visibleRects) {
-    const rectEl = layerEl.doc.createElement('div')
-    rectEl.className = SOURCE_HIGHLIGHT_RECT_CLASS
-    rectEl.style.left = `${
-      rect.left - scrollerRect.left + scrollerEl.scrollLeft
-    }px`
-    rectEl.style.top = `${rect.top - scrollerRect.top + scrollerEl.scrollTop}px`
-    rectEl.style.width = `${rect.width}px`
-    rectEl.style.height = `${rect.height}px`
-    layerEl.appendChild(rectEl)
+  if (!highlightCtor || !highlights) {
+    return false
   }
 
-  return visibleRects.length > 0
+  clearExistingCustomHighlight(doc)
+  highlights.set(SOURCE_CUSTOM_HIGHLIGHT_NAME, new highlightCtor(range))
+  return true
 }
 
-function getHighlightRectsFromEditorCoords(
+export function scrollSourcePositionToCenter(
   view: MarkdownView,
-  offset: number,
-  matchText: string
-): DOMRect[] | null {
-  const cm = (
-    view.editor as {
-      cm?: {
-        coordsAtPos?: (
-          pos: number
-        ) => { left: number; right: number; top: number; bottom: number } | null
-      }
-    }
-  ).cm
-
-  const fromCoords = cm?.coordsAtPos?.(offset)
-  const toCoords = cm?.coordsAtPos?.(offset + matchText.length)
-
-  if (!fromCoords || !toCoords) {
-    return null
-  }
-
-  const top = Math.min(fromCoords.top, toCoords.top)
-  const bottom = Math.max(fromCoords.bottom, toCoords.bottom)
-  const left = Math.min(fromCoords.left, toCoords.left)
-  const right = Math.max(fromCoords.right, toCoords.right)
-  const width = right - left
-  const height = bottom - top
-
-  if (width <= 0 || height <= 0) {
-    return null
-  }
-
-  return [new DOMRect(left, top, width, height)]
-}
-
-function applySourceTextHighlight(
-  view: MarkdownView,
-  offset: number,
-  matchText: string
+  pos: EditorPosition
 ): boolean {
   const editorElements = getSourceEditorElements(view)
   if (!editorElements) {
     return false
   }
 
-  const { editorEl, contentEl, scrollerEl } = editorElements
-  const from = view.editor.offsetToPos(offset)
-  const to = view.editor.offsetToPos(offset + matchText.length)
+  const activeLine = view.editor.getCursor().line
+  const targetLineEl = getRenderedLineElement(
+    editorElements.contentEl,
+    pos.line,
+    activeLine
+  )
 
-  if (from.line !== to.line) {
+  if (!targetLineEl) {
     return false
   }
 
-  const lineEl = getRenderedLineElement(contentEl, from.line, from.line)
-  if (!lineEl) {
-    return false
-  }
-
-  const rangeStart = locateTextPosition(lineEl, from.ch)
-  const rangeEnd = locateTextPosition(lineEl, to.ch)
-
-  if (!rangeStart || !rangeEnd) {
-    return false
-  }
-
-  ensureHighlightStyles(editorEl.doc)
-  clearExistingHighlightLayer(editorEl)
-  const range = editorEl.doc.createRange()
-  range.setStart(rangeStart.node, rangeStart.offset)
-  range.setEnd(rangeEnd.node, rangeEnd.offset)
-  const domRects = Array.from(range.getClientRects())
-  const visibleMatchRects = getHighlightRectsFromVisibleMatch(lineEl, matchText)
-  const nodeRects = getHighlightRectsFromTextNodes(lineEl, from.ch, to.ch)
-  const cmRects = getHighlightRectsFromEditorCoords(view, offset, matchText)
-  const rects = pickBestHighlightRects([
-    visibleMatchRects,
-    nodeRects,
-    domRects,
-    cmRects ?? [],
-  ])
-
-  const layerEl = createHighlightLayer(scrollerEl)
-  const didRender = addHighlightRects(layerEl, scrollerEl, rects)
-
-  if (!didRender) {
-    layerEl.remove()
-    return false
-  }
-
-  const timeout = window.setTimeout(() => {
-    layerEl.remove()
-    delete editorEl.dataset.omnisearchHighlightTimeout
-  }, SOURCE_HIGHLIGHT_DURATION_MS)
-
-  editorEl.dataset.omnisearchHighlightTimeout = String(timeout)
+  centerElementInScroller(editorElements.scrollerEl, targetLineEl)
   return true
 }
 
-async function applySourceTextHighlightWithRetry(
+async function applySourceSelectionHighlightWithRetry(
   view: MarkdownView,
   offset: number,
   matchText: string,
   line: number
-): Promise<void> {
+): Promise<boolean> {
+  if (!matchText.length) {
+    return false
+  }
+
+  const editorElements = getSourceEditorElements(view)
+  if (!editorElements) {
+    return false
+  }
+
+  const { editorEl, scrollerEl } = editorElements
+  const from = view.editor.offsetToPos(offset)
+  const to = view.editor.offsetToPos(offset + matchText.length)
+  ensureHighlightStyles(editorEl.doc)
+  clearExistingSelectionHighlight(editorEl)
+  setHighlightAlpha(editorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+  view.editor.setSelection(from, to)
+  view.editor.focus()
   const attempts = 4
 
   for (let attempt = 0; attempt < attempts; attempt++) {
     await waitForAnimationFrame()
     await waitForDelay(50)
 
-    if (applySourceTextHighlight(view, offset, matchText)) {
-      return
+    const refreshedEditorElements = getSourceEditorElements(view)
+    if (!refreshedEditorElements) {
+      continue
     }
+
+    const { editorEl: refreshedEditorEl } = refreshedEditorElements
+    const selection = refreshedEditorEl.doc.getSelection()
+    const selectedRange =
+      selection && selection.rangeCount > 0
+        ? selection.getRangeAt(0).cloneRange()
+        : null
+
+    if (selectedRange && applyCssCustomHighlight(refreshedEditorEl.doc, selectedRange)) {
+      setHighlightAlpha(refreshedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+      centerEditorRangeInScroller(refreshedEditorElements.scrollerEl, selectedRange)
+
+      await waitForAnimationFrame()
+      await waitForAnimationFrame()
+      await waitForDelay(70)
+
+      const rerenderedEditorElements = getSourceEditorElements(view)
+      const rerenderedEditorEl = rerenderedEditorElements?.editorEl
+      const rerenderedLineEl =
+        rerenderedEditorElements &&
+        getRenderedLineElement(
+          rerenderedEditorElements.contentEl,
+          line,
+          view.editor.getCursor().line
+        )
+      const rerenderedRange =
+        rerenderedLineEl && findVisibleMatchRange(rerenderedLineEl, matchText)
+
+      let highlightEditorEl = refreshedEditorEl
+
+      if (
+        rerenderedEditorEl &&
+        rerenderedRange &&
+        applyCssCustomHighlight(rerenderedEditorEl.doc, rerenderedRange)
+      ) {
+        highlightEditorEl = rerenderedEditorEl
+        setHighlightAlpha(rerenderedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+        centerEditorRangeInScroller(
+          rerenderedEditorElements.scrollerEl,
+          rerenderedRange
+        )
+      }
+
+      const fadeTimeout = window.setTimeout(() => {
+        highlightEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS)
+        startHighlightFade(highlightEditorEl)
+      }, SOURCE_HIGHLIGHT_DURATION_MS - SOURCE_HIGHLIGHT_FADE_DURATION_MS)
+
+      const timeout = window.setTimeout(() => {
+        clearExistingSelectionHighlight(highlightEditorEl)
+      }, SOURCE_HIGHLIGHT_DURATION_MS)
+
+      highlightEditorEl.dataset.omnisearchSelectionHighlightTimeout = String(
+        timeout
+      )
+      highlightEditorEl.dataset.omnisearchSelectionHighlightFadeTimeout =
+        String(fadeTimeout)
+      return true
+    }
+
+    const selectionBackgrounds = refreshedEditorEl.querySelectorAll<HTMLElement>(
+      '.cm-scroller > .cm-selectionLayer .cm-selectionBackground'
+    )
+
+    if (!selectionBackgrounds.length) {
+      continue
+    }
+
+    refreshedEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS)
+    setHighlightAlpha(refreshedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+    centerEditorRangeInScroller(refreshedEditorElements.scrollerEl, selectedRange)
+
+    const fadeTimeout = window.setTimeout(() => {
+      refreshedEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS)
+      startHighlightFade(refreshedEditorEl)
+    }, SOURCE_HIGHLIGHT_DURATION_MS - SOURCE_HIGHLIGHT_FADE_DURATION_MS)
+
+    const timeout = window.setTimeout(() => {
+      clearExistingSelectionHighlight(refreshedEditorEl)
+    }, SOURCE_HIGHLIGHT_DURATION_MS)
+
+    refreshedEditorEl.dataset.omnisearchSelectionHighlightTimeout = String(
+      timeout
+    )
+    refreshedEditorEl.dataset.omnisearchSelectionHighlightFadeTimeout = String(
+      fadeTimeout
+    )
+    return true
   }
 
-  view.setEphemeralState({ line })
+  clearExistingSelectionHighlight(editorEl)
+  return false
 }
 
 async function applyPreviewScrollWithRetry(
@@ -420,7 +625,7 @@ async function applyPreviewScrollWithRetry(
   }
 }
 
-export function scrollAndHighlight(
+export function highlightSearchTarget(
   view: MarkdownView,
   line: number,
   offset?: number,
@@ -434,11 +639,10 @@ export function scrollAndHighlight(
 
   if (nowMode === 'source') {
     if (offset === undefined || !matchText?.length) {
-      view.setEphemeralState({ line })
       return
     }
 
-    void applySourceTextHighlightWithRetry(view, offset, matchText, line)
+    void applySourceSelectionHighlightWithRetry(view, offset, matchText, line)
   } else if (nowMode === 'preview') {
     void applyPreviewScrollWithRetry(view, line)
   }
