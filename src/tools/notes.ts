@@ -90,15 +90,19 @@ export async function openNote(
     return
   }
   const pos = view.editor.offsetToPos(offset)
+  const primaryMatch = item.matches.find(match => match.offset === offset)
   // pos.ch = 0
 
   view.editor.setCursor(pos)
-  view.editor.scrollIntoView({
-    from: { line: pos.line - 10, ch: 0 },
-    to: { line: pos.line + 10, ch: 0 },
-  })
+  view.editor.scrollIntoView(
+    {
+      from: { line: pos.line - 10, ch: 0 },
+      to: { line: pos.line + 10, ch: 0 },
+    },
+    true
+  )
 
-  scrollAndHighlight(view, pos.line)
+  scrollAndHighlight(view, pos.line, offset, primaryMatch?.match)
 }
 
 export async function createNote(

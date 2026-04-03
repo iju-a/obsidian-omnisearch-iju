@@ -78,6 +78,7 @@ export interface OmnisearchSettings extends WeightingSettings {
   simpleSearch: boolean
   tokenizeUrls: boolean
   highlight: boolean
+  highlightSearchTarget: boolean
   splitCamelCase: boolean
   openInNewPane: boolean
   verboseLogging: boolean

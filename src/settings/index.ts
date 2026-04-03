@@ -115,6 +115,7 @@ export function getDefaultSettings(app: App): OmnisearchSettings {
     renderLineReturnInExcerpts: true,
     showCreateButton: false,
     highlight: true,
+    highlightSearchTarget: true,
     showPreviousQueryResults: true,
     simpleSearch: false,
     tokenizeUrls: false,

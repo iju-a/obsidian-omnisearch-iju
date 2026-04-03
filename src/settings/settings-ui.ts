@@ -95,4 +95,16 @@ export function injectSettingsUserInterface(
         await saveSettings(plugin)
       })
     )
+
+  new Setting(containerEl)
+    .setName('Highlight opened search matches')
+    .setDesc(
+      'Temporarily highlights the matched text after opening a search result.'
+    )
+    .addToggle(toggle =>
+      toggle.setValue(settings.highlightSearchTarget).onChange(async v => {
+        settings.highlightSearchTarget = v
+        await saveSettings(plugin)
+      })
+    )
 }
