@@ -91,16 +91,18 @@ export async function openNote(
   }
   const pos = view.editor.offsetToPos(offset)
   const primaryMatch = item.matches.find(match => match.offset === offset)
-  // pos.ch = 0
+  const mode = view.getMode()
 
-  view.editor.setCursor(pos)
-  view.editor.scrollIntoView(
-    {
-      from: { line: pos.line - 10, ch: 0 },
-      to: { line: pos.line + 10, ch: 0 },
-    },
-    true
-  )
+  if (mode === 'source') {
+    view.editor.setCursor(pos)
+    view.editor.scrollIntoView(
+      {
+        from: pos,
+        to: pos,
+      },
+      true
+    )
+  }
 
   scrollAndHighlight(view, pos.line, offset, primaryMatch?.match)
 }
