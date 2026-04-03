@@ -13,19 +13,6 @@ function waitForDelay(ms: number): Promise<void> {
   })
 }
 
-function blurMarkdownEditor(view: MarkdownView): void {
-  const activeElement = view.containerEl.ownerDocument.activeElement
-  if (!(activeElement instanceof HTMLElement)) {
-    return
-  }
-
-  if (!view.containerEl.contains(activeElement)) {
-    return
-  }
-
-  activeElement.blur()
-}
-
 /**
  * Extracts the PDF page number from content based on the offset, looking for page markers in format: `^# Page N^page=N$`
  */
@@ -118,6 +105,8 @@ export async function openNote(
   const mode = view.getMode()
 
   if (mode === 'source') {
+    // Give Live Preview a moment to mount the target line before centering and
+    // applying the temporary source highlight.
     await waitForDelay(OPEN_NOTE_CURSOR_DELAY_MS)
 
     view.editor.setCursor(pos)

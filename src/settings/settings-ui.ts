@@ -107,4 +107,17 @@ export function injectSettingsUserInterface(
         await saveSettings(plugin)
       })
     )
+
+  new Setting(containerEl)
+    .setName('Opened match highlight duration')
+    .setDesc('Controls how long the temporary highlight remains visible.')
+    .addSlider(cb => {
+      cb.setLimits(500, 8000, 100)
+        .setValue(settings.highlightSearchTargetDurationMs)
+        .setDynamicTooltip()
+        .onChange(async v => {
+          settings.highlightSearchTargetDurationMs = v
+          await saveSettings(plugin)
+        })
+    })
 }

@@ -2,7 +2,6 @@ import { MarkdownView } from 'obsidian'
 import type { EditorPosition } from 'obsidian'
 import { settings } from '../settings'
 
-const SOURCE_HIGHLIGHT_DURATION_MS = 3600
 const SOURCE_HIGHLIGHT_FADE_DURATION_MS = 420
 const SOURCE_HIGHLIGHT_INITIAL_ALPHA = 0.6
 const SOURCE_CUSTOM_HIGHLIGHT_NAME = 'omnisearch-source-match'
@@ -21,6 +20,39 @@ function waitForDelay(ms: number): Promise<void> {
   return new Promise(resolve => {
     window.setTimeout(resolve, ms)
   })
+}
+
+function getHighlightDurationMs(): number {
+  return Math.max(0, settings.highlightSearchTargetDurationMs ?? 3600)
+}
+
+function blurEditorWithinView(view: MarkdownView): void {
+  const activeElement = view.containerEl.ownerDocument.activeElement
+  if (!(activeElement instanceof HTMLElement)) {
+    return
+  }
+
+  if (!view.containerEl.contains(activeElement)) {
+    return
+  }
+
+  activeElement.blur()
+}
+
+function clearBrowserSelection(doc: Document): void {
+  const selection = doc.getSelection()
+  if (!selection) {
+    return
+  }
+
+  if (typeof selection.removeAllRanges === 'function') {
+    selection.removeAllRanges()
+    return
+  }
+
+  if (typeof selection.empty === 'function') {
+    selection.empty()
+  }
 }
 
 function ensureHighlightStyles(doc: Document): void {
@@ -131,6 +163,8 @@ function setHighlightAlpha(editorEl: HTMLElement, alpha: number): void {
 }
 
 function startHighlightFade(editorEl: HTMLElement): void {
+  // Drive the fade manually so the effect stays smooth even when the editor
+  // DOM changes during Live Preview re-rendering.
   const start = performance.now()
 
   const tick = (now: number) => {
@@ -247,129 +281,14 @@ function getRenderedLineElement(
   return lineEls[targetIndex] ?? null
 }
 
-function locateTextPosition(
+function findBestVisibleMatchRange(
   root: HTMLElement,
-  charOffset: number
-): {
-  node: Text
-  offset: number
-} | null {
-  const doc = root.doc
-  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  let remaining = charOffset
-  let current = walker.nextNode()
-  let lastTextNode: Text | null = null
-
-  while (current) {
-    if (current instanceof Text) {
-      lastTextNode = current
-      const length = current.textContent?.length ?? 0
-      if (remaining <= length) {
-        return { node: current, offset: remaining }
-      }
-      remaining -= length
-    }
-    current = walker.nextNode()
-  }
-
-  if (lastTextNode) {
-    return {
-      node: lastTextNode,
-      offset: lastTextNode.textContent?.length ?? 0,
-    }
-  }
-
-  return null
-}
-
-function getHighlightRectsFromTextNodes(
-  root: HTMLElement,
-  fromChar: number,
-  toChar: number
-): DOMRect[] {
-  const rects: DOMRect[] = []
-  const doc = root.doc
-  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  let current = walker.nextNode()
-  let currentOffset = 0
-
-  while (current) {
-    if (current instanceof Text) {
-      const textLength = current.textContent?.length ?? 0
-      const nodeStart = currentOffset
-      const nodeEnd = currentOffset + textLength
-      const overlapStart = Math.max(fromChar, nodeStart)
-      const overlapEnd = Math.min(toChar, nodeEnd)
-
-      if (overlapStart < overlapEnd) {
-        const range = doc.createRange()
-        range.setStart(current, overlapStart - nodeStart)
-        range.setEnd(current, overlapEnd - nodeStart)
-        rects.push(...Array.from(range.getClientRects()))
-      }
-
-      currentOffset = nodeEnd
-    }
-
-    current = walker.nextNode()
-  }
-
-  return rects
-}
-
-function getHighlightRectsFromVisibleMatch(
-  root: HTMLElement,
-  matchText: string
-): DOMRect[] {
-  const rects: DOMRect[] = []
-  const doc = root.doc
-  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  const textNodes: Array<{ node: Text; start: number; end: number }> = []
-  let current = walker.nextNode()
-  let visibleText = ''
-
-  while (current) {
-    if (current instanceof Text) {
-      const text = current.textContent ?? ''
-      const start = visibleText.length
-      visibleText += text
-      textNodes.push({
-        node: current,
-        start,
-        end: visibleText.length,
-      })
-    }
-    current = walker.nextNode()
-  }
-
-  const matchIndex = visibleText.indexOf(matchText)
-  if (matchIndex === -1) {
-    return rects
-  }
-
-  const matchEnd = matchIndex + matchText.length
-
-  for (const segment of textNodes) {
-    const overlapStart = Math.max(matchIndex, segment.start)
-    const overlapEnd = Math.min(matchEnd, segment.end)
-
-    if (overlapStart >= overlapEnd) {
-      continue
-    }
-
-    const range = doc.createRange()
-    range.setStart(segment.node, overlapStart - segment.start)
-    range.setEnd(segment.node, overlapEnd - segment.start)
-    rects.push(...Array.from(range.getClientRects()))
-  }
-
-  return rects
-}
-
-function findVisibleMatchRange(
-  root: HTMLElement,
-  matchText: string
+  matchText: string,
+  preferredCenterY?: number
 ): Range | null {
+  // After blur, Live Preview may rebuild the line DOM. Re-find the same visible
+  // text in the new DOM and prefer the match that stayed closest to the
+  // original screen position.
   const doc = root.doc
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   const textNodes: Array<{ node: Text; start: number; end: number }> = []
@@ -390,49 +309,47 @@ function findVisibleMatchRange(
     current = walker.nextNode()
   }
 
-  const matchIndex = visibleText.indexOf(matchText)
-  if (matchIndex === -1) {
-    return null
-  }
+  let searchFrom = 0
+  let bestRange: Range | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
 
-  const startSegment = textNodes.find(
-    segment => matchIndex >= segment.start && matchIndex < segment.end
-  )
-  const endIndex = matchIndex + matchText.length
-  const endSegment = textNodes.find(
-    segment => endIndex > segment.start && endIndex <= segment.end
-  )
-
-  if (!startSegment || !endSegment) {
-    return null
-  }
-
-  const range = doc.createRange()
-  range.setStart(startSegment.node, matchIndex - startSegment.start)
-  range.setEnd(endSegment.node, endIndex - endSegment.start)
-  return range
-}
-
-function pickBestHighlightRects(candidates: DOMRect[][]): DOMRect[] {
-  return candidates.reduce<DOMRect[]>((best, current) => {
-    if (current.length > best.length) {
-      return current
-    }
-    if (current.length < best.length) {
-      return best
+  while (searchFrom <= visibleText.length - matchText.length) {
+    const matchIndex = visibleText.indexOf(matchText, searchFrom)
+    if (matchIndex === -1) {
+      break
     }
 
-    const bestArea = best.reduce(
-      (sum, rect) => sum + rect.width * rect.height,
-      0
+    const startSegment = textNodes.find(
+      segment => matchIndex >= segment.start && matchIndex < segment.end
     )
-    const currentArea = current.reduce(
-      (sum, rect) => sum + rect.width * rect.height,
-      0
+    const endIndex = matchIndex + matchText.length
+    const endSegment = textNodes.find(
+      segment => endIndex > segment.start && endIndex <= segment.end
     )
 
-    return currentArea > bestArea ? current : best
-  }, [])
+    if (startSegment && endSegment) {
+      const range = doc.createRange()
+      range.setStart(startSegment.node, matchIndex - startSegment.start)
+      range.setEnd(endSegment.node, endIndex - endSegment.start)
+
+      if (preferredCenterY === undefined) {
+        return range
+      }
+
+      const rect = range.getBoundingClientRect()
+      const centerY = rect.top + rect.height / 2
+      const distance = Math.abs(centerY - preferredCenterY)
+
+      if (distance < bestDistance) {
+        bestDistance = distance
+        bestRange = range
+      }
+    }
+
+    searchFrom = matchIndex + 1
+  }
+
+  return bestRange
 }
 
 function applyCssCustomHighlight(doc: Document, range: Range): boolean {
@@ -477,8 +394,7 @@ export function scrollSourcePositionToCenter(
 async function applySourceSelectionHighlightWithRetry(
   view: MarkdownView,
   offset: number,
-  matchText: string,
-  line: number
+  matchText: string
 ): Promise<boolean> {
   if (!matchText.length) {
     return false
@@ -489,7 +405,8 @@ async function applySourceSelectionHighlightWithRetry(
     return false
   }
 
-  const { editorEl, scrollerEl } = editorElements
+  const { editorEl } = editorElements
+  const highlightDurationMs = getHighlightDurationMs()
   const from = view.editor.offsetToPos(offset)
   const to = view.editor.offsetToPos(offset + matchText.length)
   ensureHighlightStyles(editorEl.doc)
@@ -518,46 +435,56 @@ async function applySourceSelectionHighlightWithRetry(
     if (selectedRange && applyCssCustomHighlight(refreshedEditorEl.doc, selectedRange)) {
       setHighlightAlpha(refreshedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
       centerEditorRangeInScroller(refreshedEditorElements.scrollerEl, selectedRange)
-
-      await waitForAnimationFrame()
-      await waitForAnimationFrame()
-      await waitForDelay(70)
-
-      const rerenderedEditorElements = getSourceEditorElements(view)
-      const rerenderedEditorEl = rerenderedEditorElements?.editorEl
-      const rerenderedLineEl =
-        rerenderedEditorElements &&
-        getRenderedLineElement(
-          rerenderedEditorElements.contentEl,
-          line,
-          view.editor.getCursor().line
-        )
-      const rerenderedRange =
-        rerenderedLineEl && findVisibleMatchRange(rerenderedLineEl, matchText)
+      view.editor.setCursor(to)
+      const selectedRect = selectedRange.getBoundingClientRect()
+      const preferredCenterY = selectedRect.top + selectedRect.height / 2
+      blurEditorWithinView(view)
+      clearBrowserSelection(refreshedEditorEl.doc)
 
       let highlightEditorEl = refreshedEditorEl
+      // Callouts and other folded syntax can rebuild immediately after blur.
+      // Retry against the rebuilt DOM so the temporary highlight survives the
+      // token-to-rendered transition.
+      for (let rerenderAttempt = 0; rerenderAttempt < 6; rerenderAttempt++) {
+        await waitForAnimationFrame()
+        await waitForDelay(50)
 
-      if (
-        rerenderedEditorEl &&
-        rerenderedRange &&
-        applyCssCustomHighlight(rerenderedEditorEl.doc, rerenderedRange)
-      ) {
-        highlightEditorEl = rerenderedEditorEl
-        setHighlightAlpha(rerenderedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
-        centerEditorRangeInScroller(
-          rerenderedEditorElements.scrollerEl,
-          rerenderedRange
+        const rerenderedEditorElements = getSourceEditorElements(view)
+        if (!rerenderedEditorElements) {
+          continue
+        }
+
+        const rerenderedRange = findBestVisibleMatchRange(
+          rerenderedEditorElements.contentEl,
+          matchText,
+          preferredCenterY
         )
+
+        if (
+          rerenderedRange &&
+          applyCssCustomHighlight(
+            rerenderedEditorElements.editorEl.doc,
+            rerenderedRange
+          )
+        ) {
+          highlightEditorEl = rerenderedEditorElements.editorEl
+          setHighlightAlpha(highlightEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+          centerEditorRangeInScroller(
+            rerenderedEditorElements.scrollerEl,
+            rerenderedRange
+          )
+          break
+        }
       }
 
       const fadeTimeout = window.setTimeout(() => {
         highlightEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS)
         startHighlightFade(highlightEditorEl)
-      }, SOURCE_HIGHLIGHT_DURATION_MS - SOURCE_HIGHLIGHT_FADE_DURATION_MS)
+      }, Math.max(0, highlightDurationMs - SOURCE_HIGHLIGHT_FADE_DURATION_MS))
 
       const timeout = window.setTimeout(() => {
         clearExistingSelectionHighlight(highlightEditorEl)
-      }, SOURCE_HIGHLIGHT_DURATION_MS)
+      }, highlightDurationMs)
 
       highlightEditorEl.dataset.omnisearchSelectionHighlightTimeout = String(
         timeout
@@ -582,11 +509,14 @@ async function applySourceSelectionHighlightWithRetry(
     const fadeTimeout = window.setTimeout(() => {
       refreshedEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS)
       startHighlightFade(refreshedEditorEl)
-    }, SOURCE_HIGHLIGHT_DURATION_MS - SOURCE_HIGHLIGHT_FADE_DURATION_MS)
+    }, Math.max(0, highlightDurationMs - SOURCE_HIGHLIGHT_FADE_DURATION_MS))
 
     const timeout = window.setTimeout(() => {
       clearExistingSelectionHighlight(refreshedEditorEl)
-    }, SOURCE_HIGHLIGHT_DURATION_MS)
+      view.editor.setCursor(to)
+      blurEditorWithinView(view)
+      clearBrowserSelection(refreshedEditorEl.doc)
+    }, highlightDurationMs)
 
     refreshedEditorEl.dataset.omnisearchSelectionHighlightTimeout = String(
       timeout
@@ -642,7 +572,7 @@ export function highlightSearchTarget(
       return
     }
 
-    void applySourceSelectionHighlightWithRetry(view, offset, matchText, line)
+    void applySourceSelectionHighlightWithRetry(view, offset, matchText)
   } else if (nowMode === 'preview') {
     void applyPreviewScrollWithRetry(view, line)
   }
