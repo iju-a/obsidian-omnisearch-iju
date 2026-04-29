@@ -3,7 +3,6 @@ import type { EditorPosition } from 'obsidian'
 import { settings } from '../settings'
 
 const SOURCE_HIGHLIGHT_FADE_DURATION_MS = 420
-const SOURCE_HIGHLIGHT_INITIAL_ALPHA = 0.6
 const SOURCE_CUSTOM_HIGHLIGHT_NAME = 'omnisearch-source-match'
 const SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS =
   'omnisearch-source-selection-highlight-active'
@@ -24,6 +23,13 @@ function waitForDelay(ms: number): Promise<void> {
 
 function getHighlightDurationMs(): number {
   return Math.max(0, settings.highlightSearchTargetDurationMs ?? 3600)
+}
+
+function getSourceHighlightInitialAlpha(): number {
+  return Math.min(
+    1,
+    Math.max(0, settings.sourceHighlightInitialAlpha ?? 0.4)
+  )
 }
 
 function blurEditorWithinView(view: MarkdownView): void {
@@ -79,14 +85,14 @@ function ensureHighlightStyles(doc: Document): void {
         255,
         208,
         0,
-        var(--omnisearch-source-highlight-alpha, ${SOURCE_HIGHLIGHT_INITIAL_ALPHA})
+        var(--omnisearch-source-highlight-alpha, ${getSourceHighlightInitialAlpha()})
       ) !important;
       border-radius: 3px;
       box-shadow: 0 0 0 1px rgba(255, 166, 0, 0.7);
     }
 
     .cm-editor.${SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS} {
-      --omnisearch-source-highlight-alpha: ${SOURCE_HIGHLIGHT_INITIAL_ALPHA};
+      --omnisearch-source-highlight-alpha: ${getSourceHighlightInitialAlpha()};
     }
 
     .cm-editor.${SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS}.${SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS} {
@@ -97,12 +103,10 @@ function ensureHighlightStyles(doc: Document): void {
   doc.head.appendChild(styleEl)
 }
 
-function getCssHighlights(doc: Document):
-  | {
-      delete(name: string): void
-      set(name: string, value: unknown): void
-    }
-  | null {
+function getCssHighlights(doc: Document): {
+  delete(name: string): void
+  set(name: string, value: unknown): void
+} | null {
   const cssWithHighlights = doc.defaultView?.CSS as
     | {
         highlights?: {
@@ -171,7 +175,7 @@ function startHighlightFade(editorEl: HTMLElement): void {
     const elapsed = now - start
     const progress = Math.min(elapsed / SOURCE_HIGHLIGHT_FADE_DURATION_MS, 1)
     const eased = 1 - (1 - progress) * (1 - progress)
-    const alpha = SOURCE_HIGHLIGHT_INITIAL_ALPHA * (1 - eased)
+    const alpha = getSourceHighlightInitialAlpha() * (1 - eased)
     setHighlightAlpha(editorEl, alpha)
 
     if (progress < 1) {
@@ -205,11 +209,11 @@ function centerEditorRangeInScroller(
   }
 
   const rangeCenter =
-    rangeRect.top - scrollerRect.top + scrollerEl.scrollTop + rangeRect.height / 2
-  const targetScrollTop = Math.max(
-    0,
-    rangeCenter - scrollerEl.clientHeight / 2
-  )
+    rangeRect.top -
+    scrollerRect.top +
+    scrollerEl.scrollTop +
+    rangeRect.height / 2
+  const targetScrollTop = Math.max(0, rangeCenter - scrollerEl.clientHeight / 2)
 
   scrollerEl.scrollTo({
     top: targetScrollTop,
@@ -407,11 +411,12 @@ async function applySourceSelectionHighlightWithRetry(
 
   const { editorEl } = editorElements
   const highlightDurationMs = getHighlightDurationMs()
+  const initialAlpha = getSourceHighlightInitialAlpha()
   const from = view.editor.offsetToPos(offset)
   const to = view.editor.offsetToPos(offset + matchText.length)
   ensureHighlightStyles(editorEl.doc)
   clearExistingSelectionHighlight(editorEl)
-  setHighlightAlpha(editorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+  setHighlightAlpha(editorEl, initialAlpha)
   view.editor.setSelection(from, to)
   view.editor.focus()
   const attempts = 4
@@ -432,9 +437,15 @@ async function applySourceSelectionHighlightWithRetry(
         ? selection.getRangeAt(0).cloneRange()
         : null
 
-    if (selectedRange && applyCssCustomHighlight(refreshedEditorEl.doc, selectedRange)) {
-      setHighlightAlpha(refreshedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
-      centerEditorRangeInScroller(refreshedEditorElements.scrollerEl, selectedRange)
+    if (
+      selectedRange &&
+      applyCssCustomHighlight(refreshedEditorEl.doc, selectedRange)
+    ) {
+      setHighlightAlpha(refreshedEditorEl, initialAlpha)
+      centerEditorRangeInScroller(
+        refreshedEditorElements.scrollerEl,
+        selectedRange
+      )
       view.editor.setCursor(to)
       const selectedRect = selectedRange.getBoundingClientRect()
       const preferredCenterY = selectedRect.top + selectedRect.height / 2
@@ -468,7 +479,7 @@ async function applySourceSelectionHighlightWithRetry(
           )
         ) {
           highlightEditorEl = rerenderedEditorElements.editorEl
-          setHighlightAlpha(highlightEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
+          setHighlightAlpha(highlightEditorEl, initialAlpha)
           centerEditorRangeInScroller(
             rerenderedEditorElements.scrollerEl,
             rerenderedRange
@@ -486,25 +497,28 @@ async function applySourceSelectionHighlightWithRetry(
         clearExistingSelectionHighlight(highlightEditorEl)
       }, highlightDurationMs)
 
-      highlightEditorEl.dataset.omnisearchSelectionHighlightTimeout = String(
-        timeout
-      )
+      highlightEditorEl.dataset.omnisearchSelectionHighlightTimeout =
+        String(timeout)
       highlightEditorEl.dataset.omnisearchSelectionHighlightFadeTimeout =
         String(fadeTimeout)
       return true
     }
 
-    const selectionBackgrounds = refreshedEditorEl.querySelectorAll<HTMLElement>(
-      '.cm-scroller > .cm-selectionLayer .cm-selectionBackground'
-    )
+    const selectionBackgrounds =
+      refreshedEditorEl.querySelectorAll<HTMLElement>(
+        '.cm-scroller > .cm-selectionLayer .cm-selectionBackground'
+      )
 
     if (!selectionBackgrounds.length) {
       continue
     }
 
     refreshedEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_ACTIVE_CLASS)
-    setHighlightAlpha(refreshedEditorEl, SOURCE_HIGHLIGHT_INITIAL_ALPHA)
-    centerEditorRangeInScroller(refreshedEditorElements.scrollerEl, selectedRange)
+    setHighlightAlpha(refreshedEditorEl, initialAlpha)
+    centerEditorRangeInScroller(
+      refreshedEditorElements.scrollerEl,
+      selectedRange
+    )
 
     const fadeTimeout = window.setTimeout(() => {
       refreshedEditorEl.addClass(SOURCE_SELECTION_HIGHLIGHT_FADING_CLASS)
@@ -518,12 +532,10 @@ async function applySourceSelectionHighlightWithRetry(
       clearBrowserSelection(refreshedEditorEl.doc)
     }, highlightDurationMs)
 
-    refreshedEditorEl.dataset.omnisearchSelectionHighlightTimeout = String(
-      timeout
-    )
-    refreshedEditorEl.dataset.omnisearchSelectionHighlightFadeTimeout = String(
-      fadeTimeout
-    )
+    refreshedEditorEl.dataset.omnisearchSelectionHighlightTimeout =
+      String(timeout)
+    refreshedEditorEl.dataset.omnisearchSelectionHighlightFadeTimeout =
+      String(fadeTimeout)
     return true
   }
 

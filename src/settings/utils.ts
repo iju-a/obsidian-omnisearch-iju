@@ -82,6 +82,7 @@ export interface OmnisearchSettings extends WeightingSettings {
   highlight: boolean
   highlightSearchTarget: boolean
   highlightSearchTargetDurationMs: number
+  sourceHighlightInitialAlpha: number
   splitCamelCase: boolean
   openInNewPane: boolean
   verboseLogging: boolean

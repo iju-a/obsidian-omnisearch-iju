@@ -118,6 +118,7 @@ export function getDefaultSettings(app: App): OmnisearchSettings {
     highlight: true,
     highlightSearchTarget: true,
     highlightSearchTargetDurationMs: 3600,
+    sourceHighlightInitialAlpha: 0.4,
     showPreviousQueryResults: true,
     simpleSearch: false,
     tokenizeUrls: false,

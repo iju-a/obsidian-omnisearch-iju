@@ -120,4 +120,17 @@ export function injectSettingsUserInterface(
           await saveSettings(plugin)
         })
     })
+
+  new Setting(containerEl)
+    .setName('Opened match highlight opacity')
+    .setDesc('Controls how strong the temporary highlight appears at the start.')
+    .addSlider(cb => {
+      cb.setLimits(0, 1, 0.05)
+        .setValue(settings.sourceHighlightInitialAlpha)
+        .setDynamicTooltip()
+        .onChange(async v => {
+          settings.sourceHighlightInitialAlpha = v
+          await saveSettings(plugin)
+        })
+    })
 }
