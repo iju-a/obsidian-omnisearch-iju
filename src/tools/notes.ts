@@ -127,7 +127,7 @@ export async function openNote(
   }
   const pos = view.editor.offsetToPos(offset)
 
-  if(settings.highlight) {
+  if(settings.highlightSearchTarget) {
     const primaryMatch = item.matches.find(match => match.offset === offset)
     const mode = view.getMode()
 

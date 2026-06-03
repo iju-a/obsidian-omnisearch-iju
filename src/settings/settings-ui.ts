@@ -96,7 +96,7 @@ export function injectSettingsUserInterface(
     )
 
   new Setting(containerEl)
-    .setName('Highlight opened search matches')
+    .setName('Highlight opened search matches - custom')
     .setDesc(
       'Temporarily highlights the matched text after opening a search result.'
     )
