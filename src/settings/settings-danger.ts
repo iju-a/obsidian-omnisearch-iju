@@ -1,10 +1,8 @@
 import { Notice, Setting } from 'obsidian'
+import { K_DISABLE_OMNISEARCH } from '../globals'
+import type OmnisearchPlugin from '../main'
 import type { OmnisearchSettings } from './utils'
-import { isCacheEnabled } from './utils'
-import { saveSettings } from './utils'
-import { htmlDescription, isPluginDisabled, needsARestart } from './utils'
-import type OmnisearchPlugin from 'src/main'
-import { K_DISABLE_OMNISEARCH } from 'src/globals'
+import { htmlDescription, isCacheEnabled, isPluginDisabled, needsARestart, saveSettings } from './utils'
 
 export function injectSettingsDanger(
   plugin: OmnisearchPlugin,
@@ -43,11 +41,8 @@ export function injectSettingsDanger(
     )
 
   // Disable Omnisearch
-  const disableDesc = new DocumentFragment()
-  disableDesc.createSpan({}, span => {
-    span.innerHTML = `Disable Omnisearch on this device only.<br>
-      ${needsARestart}`
-  })
+  const disableDesc = htmlDescription(`Disable Omnisearch on this device only.<br>
+      ${needsARestart}`)
   new Setting(containerEl)
     .setName('Disable on this device')
     .setDesc(disableDesc)

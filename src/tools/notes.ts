@@ -1,10 +1,17 @@
-import { type App, type CachedMetadata, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian'
+import {
+  type App,
+  type CachedMetadata,
+  MarkdownView,
+  TFile,
+  WorkspaceLeaf,
+} from 'obsidian'
 import OmnisearchPlugin from '../main'
 import type { ResultNote } from '../globals'
 import {
   highlightSearchTarget,
   scrollSourcePositionToCenter,
-} from 'src/iju/scrollAndHighlight'
+} from '../iju/scrollAndHighlight'
+import { settings } from '../settings'
 
 const OPEN_NOTE_CURSOR_DELAY_MS = 120
 
@@ -43,7 +50,7 @@ export async function openNote(
   newPane = false,
   newLeaf = false
 ): Promise<void> {
-  const app = plugin.app;
+  const app = plugin.app
   // We don't have a way to switch pages on a PDF view, so we must open a new pane for PDF results to trigger page navigation
   // We should only trigger this behaviour if we know the page number for the result
   // This code runs before the normal implementation because we don't want to trigger activation of an existing pane for this PDF and then open a new one on top
@@ -104,7 +111,11 @@ export async function openNote(
       const leaf = app.workspace.getLeaf(newLeaf ? 'split' : newPane)
       await leaf.openFile(existingFile, { active: !newLeaf && !newPane })
     } else {
-      await app.workspace.openLinkText(item.path, '', newLeaf ? 'split' : newPane)
+      await app.workspace.openLinkText(
+        item.path,
+        '',
+        newLeaf ? 'split' : newPane
+      )
     }
   }
 
@@ -115,19 +126,51 @@ export async function openNote(
     return
   }
   const pos = view.editor.offsetToPos(offset)
-  const primaryMatch = item.matches.find(match => match.offset === offset)
-  const mode = view.getMode()
 
-  if (mode === 'source') {
-    // Give Live Preview a moment to mount the target line before centering and
-    // applying the temporary source highlight.
-    await waitForDelay(OPEN_NOTE_CURSOR_DELAY_MS)
+  if(settings.highlight) {
+    const primaryMatch = item.matches.find(match => match.offset === offset)
+    const mode = view.getMode()
 
+    if (mode === 'source') {
+      // Give Live Preview a moment to mount the target line before centering and
+      // applying the temporary source highlight.
+      await waitForDelay(OPEN_NOTE_CURSOR_DELAY_MS)
+
+      view.editor.setCursor(pos)
+      scrollSourcePositionToCenter(view, pos)
+    }
+
+    highlightSearchTarget(view, pos.line, offset, primaryMatch?.match)
     view.editor.setCursor(pos)
-    scrollSourcePositionToCenter(view, pos)
+    view.editor.scrollIntoView({
+      from: { line: Math.max(0, pos.line - 10), ch: 0 },
+      to: { line: pos.line + 10, ch: 0 },
+    })
   }
+  else{
+    // Highlight the match with a pink selection (like Ctrl+F)
+    const match = item.matches?.find(m => m.offset === offset)
+    if (match) {
+      const endPos = view.editor.offsetToPos(offset + match.match.length)
+      view.editor.setSelection(endPos, pos)
 
-  highlightSearchTarget(view, pos.line, offset, primaryMatch?.match)
+      // Find .cm-editor reliably through the view's content area
+      const cmEditor =
+        view.contentEl?.querySelector('.cm-editor') ??
+        view.containerEl?.querySelector('.cm-editor') ??
+        document.querySelector('.cm-editor')
+      if (cmEditor) {
+        cmEditor.classList.add('omnisearch-result-highlight')
+        const cleanup = () => {
+          cmEditor.classList.remove('omnisearch-result-highlight')
+          cmEditor.removeEventListener('mousedown', cleanup)
+          cmEditor.removeEventListener('keydown', cleanup)
+        }
+        cmEditor.addEventListener('mousedown', cleanup)
+        cmEditor.addEventListener('keydown', cleanup)
+      }
+    }
+  }
 }
 
 export async function createNote(

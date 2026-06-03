@@ -1,9 +1,8 @@
+import { debounce } from 'es-toolkit'
 import { Setting } from 'obsidian'
+import type OmnisearchPlugin from '../main'
 import type { OmnisearchSettings } from './utils'
-import { saveSettings } from './utils'
-import { htmlDescription } from './utils'
-import type OmnisearchPlugin from 'src/main'
-import { debounce } from 'lodash-es'
+import { htmlDescription, saveSettings } from './utils'
 
 export function injectSettingsIndexing(
   plugin: OmnisearchPlugin,
@@ -22,7 +21,7 @@ export function injectSettingsIndexing(
     .setName('Indexing')
     .setHeading()
     .setDesc(
-      htmlDescription(`⚠️ <span style="color: var(--text-accent)">Changing indexing settings will clear the cache, and requires a restart of Obsidian.</span><br/><br/>
+      htmlDescription(`<div style="margin-top: 1em; color: var(--text-accent)">⚠️ Changing indexing settings will clear the cache, and requires a restart of Obsidian.</div><br/>
         ${
           textExtractor
             ? `👍 You have installed <a href="https://github.com/scambier/obsidian-text-extractor">Text Extractor</a>, Omnisearch can use it to index PDFs and images contents.
@@ -31,8 +30,8 @@ export function injectSettingsIndexing(
         }
         ${
           aiImageAnalyzer
-            ? `<br/>👍 You have installed <a href="https://github.com/Swaggeroo/obsidian-ai-image-analyzer">AI Image Analyzer</a>, Omnisearch can use it to index images contents with ai.`
-            : `<br/>⚠️ Omnisearch requires <a href="https://github.com/Swaggeroo/obsidian-ai-image-analyzer">AI Image Analyzer</a> to index images with ai.`
+            ? `<br/>👍 You have installed <a href="https://github.com/Swaggeroo/obsidian-ai-image-analyzer">AI Image Analyzer</a>, Omnisearch can use it to index images contents with AI.`
+            : `<br/>⚠️ Omnisearch requires <a href="https://github.com/Swaggeroo/obsidian-ai-image-analyzer">AI Image Analyzer</a> to index images with AI.`
         }`)
     )
 
@@ -71,10 +70,9 @@ export function injectSettingsIndexing(
     .setDisabled(!textExtractor)
 
   // Office Documents Indexing
-  const indexOfficesDesc = new DocumentFragment()
-  indexOfficesDesc.createSpan({}, span => {
-    span.innerHTML = `Omnisearch will use Text Extractor to index the content of your office documents (currently <pre style="display:inline">.docx</pre> and <pre style="display:inline">.xlsx</pre>).`
-  })
+  const indexOfficesDesc = htmlDescription(
+    `Omnisearch will use Text Extractor to index the content of your office documents (currently <pre style="display:inline">.docx</pre> and <pre style="display:inline">.xlsx</pre>).`
+  )
   new Setting(containerEl)
     .setName(`Documents content indexing ${textExtractor ? '' : '⚠️ Disabled'}`)
     .setDesc(indexOfficesDesc)
@@ -88,11 +86,9 @@ export function injectSettingsIndexing(
     .setDisabled(!textExtractor)
 
   // AI Images Indexing
-  const aiIndexImagesDesc = new DocumentFragment()
-  aiIndexImagesDesc.createSpan({}, span => {
-    span.innerHTML = `Omnisearch will use AI Image Analyzer to index the content of your images with ai.<br/>
-    ⚠️ <span style="color: var(--text-accent)">If both AI Image Analyzer and Text Extractor are enabled, Text Extractor will only be used as a fallback.</span>`
-  })
+  const aiIndexImagesDesc =
+    htmlDescription(`Omnisearch will use AI Image Analyzer to index the content of your images with AI.<br/>
+    ⚠️ <span style="color: var(--text-accent)">If both AI Image Analyzer and Text Extractor are enabled, Text Extractor will only be used as a fallback.</span>`)
   new Setting(containerEl)
     .setName(`Images AI indexing ${aiImageAnalyzer ? '' : '⚠️ Disabled'}`)
     .setDesc(aiIndexImagesDesc)

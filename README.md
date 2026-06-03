@@ -6,7 +6,7 @@
 ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/scambier/obsidian-omnisearch)
 ![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/scambier/obsidian-omnisearch?include_prereleases&label=BRAT%20beta)
 
-> 🏆 Winner of the _[2023 Gems of the Year](https://obsidian.md/blog/2023-goty-winners/)_ in the "Existing plugin" category 🏆
+_🏆 Winner of the _[2023 Gems of the Year](https://obsidian.md/blog/2023-goty-winners/)_ in the "Existing plugin" category 🏆_
 
 
 ---
@@ -63,6 +63,7 @@ _Submit a PR to add your own project!_
 - [Actions for Obsidian](https://actions.work/actions-for-obsidian)
 - [Notebook Navigator](https://notebooknavigator.com/)
 - [Userscripts](https://publish.obsidian.md/omnisearch/Inject+Omnisearch+results+into+your+search+engine) to inject Omnisearch into your favorite web search engine
+- [obsidian-mcp-server](https://github.com/cyanheads/obsidian-mcp-server), an MCP server that auto-detects Omnisearch and exposes it as a BM25-ranked search mode for AI agents accessing your vault
 
 ## LICENSE
 

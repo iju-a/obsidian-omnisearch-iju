@@ -26,7 +26,7 @@
   import ResultItemVault from './ResultItemVault.svelte'
   import { Query } from '../search/query'
   import { cancelable, CancelablePromise } from 'cancelable-promise'
-  import { debounce } from 'lodash-es'
+  import { debounce } from 'es-toolkit'
   import type OmnisearchPlugin from '../main'
   import LazyLoader from './lazy-loader/LazyLoader.svelte'
 
@@ -323,10 +323,10 @@
   placeholder="Omnisearch - Vault">
   <div class="omnisearch-input-container__buttons">
     {#if plugin.settings.showCreateButton}
-      <button on:click={onClickCreateNote}>Create note</button>
+      <button onclick={onClickCreateNote}>Create note</button>
     {/if}
     {#if Platform.isMobile}
-      <button on:click={switchToInFileModal}>In-File search</button>
+      <button onclick={switchToInFileModal}>In-File search</button>
     {/if}
   </div>
 </InputSearch>
