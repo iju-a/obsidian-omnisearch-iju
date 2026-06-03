@@ -10,7 +10,8 @@ export default defineConfig([
     plugins: { js },
     extends: ['js/recommended'],
     languageOptions: { globals: globals.browser },
-    ignores: ['dist/**'],
+    // ignores: ['dist/**'],
+    ignores: ['**/*']
   },
   {
     files: ['**/*.{ts,mts,cts}'],
@@ -24,5 +25,6 @@ export default defineConfig([
         project: './tsconfig.json',
       },
     },
+    ignores: ['**/*'],
   },
 ])
